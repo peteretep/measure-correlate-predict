@@ -2,6 +2,7 @@ import csv
 from datetime import datetime
 from itertools import islice
 from scipy.stats.stats import pearsonr
+from scipy.stats import linregress
 import matplotlib.pyplot as plt
 from IPython import embed
 
@@ -19,7 +20,7 @@ class memoize(dict):
 
 
 def average_mast_speed(s1, s2):
-    return int(((float(s1) + float(s2)) / 2))
+    return float(((float(s1) + float(s2)) / 2))
 
 
 def mast_format_time(timestring):
@@ -65,6 +66,16 @@ def ref_speed_in_ms(kts_spd):
     return kts_spd * 0.514
 
 
+def extrapolated_ref_speed(ms_speed):
+    spd_60 = ms_speed * (60 / 10) ** 0.143
+    return spd_60
+
+
+def reference_speed(kts_spd):
+    ms_speed = ref_speed_in_ms(kts_spd)
+    return extrapolated_ref_speed(ms_speed)
+
+
 @memoize
 def reference_data():
     with open('reference_site_wind_speed_dir_1980_2013.csv', 'rb') as reffile:
@@ -72,7 +83,7 @@ def reference_data():
         ref_data_arr = []
         for row in islice(referencereader, 1, None):
             row_dict = {'time': ref_format_time(row),
-                        'speed': ref_speed_in_ms(int(row[4])),
+                        'speed': reference_speed(int(row[4])),
                         'direction': int(row[5])}
             ref_data_arr.append(row_dict)
         return ref_data_arr
@@ -139,8 +150,32 @@ def plot_ref_mast():
 
 correlation_coeff = pearsonr(mast_speeds(), reference_speeds())
 print "The Pearson correlation coefficient is %f" % correlation_coeff[0]
+
+slope, intercept, r_value, p_value, std_err = linregress(mast_speeds(), reference_speeds())
+
+print "Pearson correlation coefficient: %f" % r_value
+print "Slope: %f" % slope
+print "Intercept: %f" % intercept
+
+
+def predict(ref_speed):
+    site_speed = (slope * ref_speed) + intercept
+    return site_speed
+
+
+def predicted_speeds():
+    predicted_data = []
+    for row in reference_data():
+        row_dict = {'time': row['time'],
+                    'reference_speed': row['speed'],
+                    'site_speed': predict(row['speed'])}
+        predicted_data.append(row_dict)
+    return predicted_data
+
+
 embed()
-# TODO: Clean out broken data
+# cProfile.run(pearsonr(mast_speeds(), reference_speeds()))
+# embed()
+
 # TODO: Get average of mast measurements
 # TODO: Save big_dict to a new csv file
-# TODO: reference speeds are in knots!
