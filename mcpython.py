@@ -1,10 +1,10 @@
 import csv
 from datetime import datetime
 from itertools import islice
-from scipy.stats.stats import pearsonr
 from scipy.stats import linregress
 import matplotlib.pyplot as plt
 from IPython import embed
+import pandas as pd
 
 
 class memoize(dict):
@@ -19,158 +19,106 @@ class memoize(dict):
         return result
 
 
-def average_mast_speed(s1, s2):
-    return float(((float(s1) + float(s2)) / 2))
-
-
-def mast_format_time(timestring):
-    try:
-        return datetime.strptime(timestring, '%d/%m/%Y %H:%M')
-    except ValueError:
-        return datetime.strptime(timestring, '%d/%m/%Y')
-
-
-def ref_format_time(row):
-    return datetime(int(row[0]), int(row[1]), int(row[2]), int(row[3]))
-
-
-@memoize
-def mast_data_start_time():
-    return mast_data()[0]['time']
-
-
-@memoize
-def mast_data_end_time():
-    return mast_data()[-1]['time']
-
-
-@memoize
-def mast_data():
-    with open('mast_data.csv', 'rb') as mastfile:
-        mastreader = csv.reader(mastfile)
-        mast_data_arr = []
-        for row in islice(mastreader, 12, None):
-            time = mast_format_time(row[0])
-            if time.minute != 0:
-                continue
-            if row[1] == '0' and row[2] == '0' and row[8] == '0':
-                continue
-            row_dict = {'time': time,
-                        'speed': average_mast_speed(row[1], row[2]),
-                        'direction': int(float(row[8]))}
-            mast_data_arr.append(row_dict)
-        return mast_data_arr
-
-
-def ref_speed_in_ms(kts_spd):
+def kts_to_ms(kts_spd):
     return kts_spd * 0.514
 
 
-def extrapolated_ref_speed(ms_speed):
+def extrapolate_to_60(ms_speed):
     spd_60 = ms_speed * (60 / 10) ** 0.143
     return spd_60
 
 
-def reference_speed(kts_spd):
-    ms_speed = ref_speed_in_ms(kts_spd)
-    return extrapolated_ref_speed(ms_speed)
+@memoize
+def raw_mast_data():
+    df = pd.read_csv('mast_data.csv',
+                     header=11,
+                     parse_dates=['time'],
+                     usecols=[0, 1, 2, 8],
+                     names=['time', 's60_one', 's60_two', 'mast_dir'],
+                     index_col='time')
+    df['mean_mast_speed'] = pd.Series(((df.s60_one + df.s60_two) / 2),
+                                      index=df.index)
+    return df
 
 
 @memoize
-def reference_data():
-    with open('reference_site_wind_speed_dir_1980_2013.csv', 'rb') as reffile:
-        referencereader = csv.reader(reffile)
-        ref_data_arr = []
-        for row in islice(referencereader, 1, None):
-            row_dict = {'time': ref_format_time(row),
-                        'speed': reference_speed(int(row[4])),
-                        'direction': int(row[5])}
-            ref_data_arr.append(row_dict)
-        return ref_data_arr
+def cleaned_mast_data():
+    df = raw_mast_data()[(raw_mast_data()['s60_one'] != 0) & (raw_mast_data()['s60_two'] != 0) & (raw_mast_data()['mast_dir'] != 0)]
+    df = drop_unused_cols(df)
+    return df
+
+
+def drop_unused_cols(df):
+    df = df.drop('s60_one', 1)
+    df = df.drop('s60_two', 1)
+    return df
+
+
+def hourly_mast_data():
+    return cleaned_mast_data().groupby(pd.TimeGrouper(freq='H')).mean()
+
+
+def raw_reference_data():
+    df = pd.read_csv('reference_site_wind_speed_dir_1980_2013.csv',
+                     parse_dates={'time': [0, 1, 2, 3]},
+                     header=0)
+    df['time'] = pd.to_datetime(df['time'], format="%Y %m %d %H")
+    df['ref_speed_ms'] = pd.Series(kts_to_ms(df['wsp_kts']))
+    df = df.drop('wsp_kts', 1)
+    df = df.set_index('time')
+    return df
+
+
+def extrapolated_reference_data():
+    df = raw_reference_data()
+    df['extr_speed_ms'] = pd.Series(extrapolate_to_60(df['ref_speed_ms']))
+    return df
 
 
 @memoize
-def big_dict():
-    cleaned_array = []
-    for row in mast_data():
-        ref_row = next((r for r in reference_data() if r['time'] == row['time']), None)
-        row_dict = {'time': row['time'],
-                    'mast_speed': row['speed'],
-                    'mast_direction': row['direction'],
-                    'reference_speed': ref_row['speed'],
-                    'reference_direction': ref_row['direction']}
-        cleaned_array.append(row_dict)
-    return cleaned_array
+def joined_2012_data():
+    df = hourly_mast_data().join(extrapolated_reference_data()).dropna()
+    return df
 
 
-def reference_data_in_2012():
-    data_2012 = []
-    for row in reference_data():
-        if mast_data_start_time() <= row['time'] <= mast_data_end_time():
-            data_2012.append(row)
-    return data_2012
+# def plot_speeds_with_time():
+#     plt.plot(mast_times(), mast_speeds(), 'ro')
+#     plt.plot(reference_times(), reference_speeds(), 'bo')
+#     plt.ylabel('Wind Speed')
+#     plt.xlabel('Time')
+#     plt.show()
 
 
-def reference_speeds():
-    return [d['reference_speed'] for d in big_dict()]
+# def plot_ref_mast():
+#     plt.plot(reference_speeds(), mast_speeds(), 'ro')
+#     plt.ylabel('Mast Speeds')
+#     plt.xlabel('Reference Speeds')
+#     plt.show()
 
 
-def mast_speeds():
-    return [d['mast_speed'] for d in big_dict()]
+# correlation_coeff = pearsonr(mast_speeds(), reference_speeds())
+# print "The Pearson correlation coefficient is %f" % correlation_coeff[0]
 
-
-def reference_times():
-    times = []
-    for row in reference_data_in_2012():
-        times.append(row['time'])
-    return times
-
-
-def mast_times():
-    times = []
-    for row in mast_data():
-        times.append(row['time'])
-    return times
-
-
-def plot_speeds_with_time():
-    plt.plot(mast_times(), mast_speeds(), 'ro')
-    plt.plot(reference_times(), reference_speeds(), 'bo')
-    plt.ylabel('Wind Speed')
-    plt.xlabel('Time')
-    plt.show()
-
-
-def plot_ref_mast():
-    plt.plot(reference_speeds(), mast_speeds(), 'ro')
-    plt.ylabel('Mast Speeds')
-    plt.xlabel('Reference Speeds')
-    plt.show()
-
-
-correlation_coeff = pearsonr(mast_speeds(), reference_speeds())
-print "The Pearson correlation coefficient is %f" % correlation_coeff[0]
-
-slope, intercept, r_value, p_value, std_err = linregress(mast_speeds(), reference_speeds())
+slope, intercept, r_value, p_value, std_err = linregress(joined_2012_data().mean_mast_speed.tolist(), joined_2012_data().extr_speed_ms.tolist())
 
 print "Pearson correlation coefficient: %f" % r_value
 print "Slope: %f" % slope
 print "Intercept: %f" % intercept
 
 
-def predict(ref_speed):
-    site_speed = (slope * ref_speed) + intercept
-    return site_speed
+# def predict(ref_speed):
+#     site_speed = (slope * ref_speed) + intercept
+#     return site_speed
 
 
-def predicted_speeds():
-    predicted_data = []
-    for row in reference_data():
-        row_dict = {'time': row['time'],
-                    'reference_speed': row['speed'],
-                    'site_speed': predict(row['speed'])}
-        predicted_data.append(row_dict)
-    return predicted_data
+# def predicted_speeds():
+#     predicted_data = []
+#     for row in reference_data():
+#         row_dict = {'time': row['time'],
+#                     'reference_speed': row['speed'],
+#                     'site_speed': predict(row['speed'])}
+#         predicted_data.append(row_dict)
+#     return predicted_data
 
 
 embed()
