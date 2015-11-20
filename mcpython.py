@@ -1,11 +1,13 @@
 from scipy.stats import linregress
-from IPython import embed
 import pandas as pd
 import numpy as np
+from cmath import rect, phase
+from math import radians, degrees
 
 
 class memoize(dict):
-    """Used to memoize function values"""
+    """Used to memoize function values.
+       Only important to improve performance"""
     def __init__(self, func):
         self.func = func
 
@@ -31,8 +33,8 @@ def extrapolate_to_60(ms_speed):
 
 @memoize
 def raw_mast_data():
-    """Reads the mast_data.csv file and returns a dataframe
-       with mast wind speed at 60m.
+    """Reads the mast_data.csv file and returns a time indexed
+       dataframe with mast wind speed at 60m.
        It takes the maximum value from the two anemometers"""
     df = pd.read_csv('mast_data.csv',
                      header=11,
@@ -56,11 +58,17 @@ def cleaned_mast_data():
 
 
 def hourly_mast_data():
+    """Gets the hourly average of the mast data.
+       Do not use for wind direction"""
     return cleaned_mast_data().groupby(pd.TimeGrouper(freq='H')).mean()
 
 
 @memoize
 def raw_reference_data():
+    """Reads the reference site csv file and returns a
+       time indexed dataframe containing speed and direction.
+       Converts windspeed in knots to m/s.
+    """
     df = pd.read_csv('reference_site_wind_speed_dir_1980_2013.csv',
                      parse_dates={'time': [0, 1, 2, 3]},
                      header=0)
@@ -117,7 +125,8 @@ def mean_speed_from_mast():
 
 def rms_error():
     """Returns the Root Mean Square Error between
-       predicted and measured speeds"""
+       predicted and measured speeds
+    """
     df = predicted_speeds().join(hourly_mast_data()).dropna()
     actual = df.mean_mast_speed.as_matrix()
     predicted = df.site_speed.as_matrix()
@@ -125,14 +134,29 @@ def rms_error():
     return rmse
 
 
+def mean_angle(deg_list):
+    alist = deg_list.mast_dir.tolist()
+    if len(alist) > 0:
+        mean = degrees(phase(sum(rect(1, radians(d)) for d in alist) / len(alist)))
+        if mean < 0:
+            mean = 360 + mean
+        return pd.Series(mean)
+
+
+def hourly_wind_direction():
+    """ Returns a dataframe with the average hourly wind direction"""
+    df = cleaned_mast_data().groupby(pd.TimeGrouper(freq='H')).apply(mean_angle)
+    return df
+
+
 def bias_error_degrees():
     """The problem is getting the average windspeed for the hour from the mast.
        This is where wrap around is an issue.
        The hourly data we have collected in joined_2012_data may contain
-       incorrect means wind directions per hour"""
-    df = joined_2012_data()
-    mast_direction = df.mast_dir.as_matrix()
-    site_direction = df.wdir_deg.as_matrix()
+       incorrect means wind directions per hour
+    """
+    mast_direction = hourly_wind_direction().as_matrix()
+    site_direction = joined_2012_data().wdir_deg.as_matrix()
     bias = (mast_direction - site_direction).mean()
     return bias
 
@@ -157,6 +181,3 @@ print rms_error()
 
 print "The Bias error in degrees:"
 print bias_error_degrees()
-# embed()
-
-# TODO: Get average wind direction of mast measurements
