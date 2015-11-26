@@ -95,6 +95,8 @@ The Root Mean Square Error between predicted and measured windspeed:
 2.9502990692
 The Bias error in degrees:
 -8.88163985661
+The long term uncertainty (standard deviation of predicted speeds):
+1.18079234741
 
 ## Further work
 If temperature data was available, it would be good to remove mast data when the temperature is less than 0 as icing on instruments may be an issue.
