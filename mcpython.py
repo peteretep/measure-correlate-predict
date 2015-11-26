@@ -161,6 +161,12 @@ def bias_error_degrees():
     return bias
 
 
+def long_term_uncertainty():
+    speeds = mean_speeds_from_predicted().site_speed.as_matrix()    
+    return np.std(speeds, axis=0)
+
+# from IPython import embed
+# embed()
 slope, intercept, r_value, p_value, std_err = linregress(joined_2012_data().mean_mast_speed.tolist(), joined_2012_data().extr_speed_ms.tolist())
 
 print "Pearson correlation coefficient:"
@@ -181,3 +187,6 @@ print rms_error()
 
 print "The Bias error in degrees:"
 print bias_error_degrees()
+
+print "The long term uncertainty (standard deviation of predicted speeds):"
+print long_term_uncertainty()
